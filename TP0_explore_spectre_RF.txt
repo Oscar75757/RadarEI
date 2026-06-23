@@ -59,10 +59,10 @@ try:
     import adi
     PLUTO_DISPONIBLE = True
     print("[OK] Module pyadi-iio détecté.")
-except ImportError:
-    print("[INFO] pyadi-iio non installé.")
+except Exception:
+    print("[INFO] pyadi-iio non installé ou libiio manquant.")
     print("       → Le TP tourne en mode SIMULATION (signaux synthétiques)")
-    print("       → Pour le mode réel : pip install pyadi-iio")
+    print("       → Pour le mode réel : pip install pyadi-iio + installer libiio")
 
 
 # ─────────────────────────────────────────────────────────────
