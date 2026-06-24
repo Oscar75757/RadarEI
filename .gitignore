@@ -1,0 +1,11 @@
+# Environnement Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Dumps de diagnostic / données brutes
+*.npy
+logs/*.npy

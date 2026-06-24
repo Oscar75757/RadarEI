@@ -1,0 +1,30 @@
+import numpy as np
+from scipy.signal import butter, sosfilt, sosfilt_zi
+import config
+
+
+def _butter_bandpass(low: float, high: float, fs: float, order: int):
+    nyq = fs / 2.0
+    sos = butter(order, [low / nyq, high / nyq], btype="band", output="sos")
+    return sos
+
+
+class RespiratoryFilter:
+    """Filtre passe-bande Butterworth en temps-réel (mode streaming avec état persistant).
+
+    Préserve l'état entre les appels pour ne pas introduire de discontinuités
+    à chaque nouveau buffer — indispensable en traitement continu.
+    """
+
+    def __init__(self):
+        self._sos = _butter_bandpass(
+            config.F_LOW, config.F_HIGH, config.DECIMATED_FS, config.FILTER_ORDER
+        )
+        self._zi = sosfilt_zi(self._sos)   # conditions initiales à zéro
+
+    def apply(self, signal: np.ndarray) -> np.ndarray:
+        filtered, self._zi = sosfilt(self._sos, signal, zi=self._zi)
+        return filtered
+
+    def reset(self):
+        self._zi = sosfilt_zi(self._sos)
