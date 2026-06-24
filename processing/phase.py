@@ -24,6 +24,22 @@ def remove_dc(signal: np.ndarray) -> np.ndarray:
     return signal - np.mean(signal)
 
 
+def oscillation_amplitude(signal: np.ndarray) -> float:
+    """Amplitude d'oscillation (écart-type) d'un signal après détrend LINÉAIRE.
+
+    Sert à détecter l'apnée RAPIDEMENT, sur la phase BRUTE plutôt que sur la
+    sortie du passe-haut : la phase brute se fige instantanément quand la
+    respiration s'arrête (pas de décroissance lente du filtre). Le détrend
+    linéaire retire la dérive du corps sur la fenêtre, sans queue temporelle.
+    """
+    n = len(signal)
+    if n < 2:
+        return 0.0
+    x = np.arange(n)
+    slope, intercept = np.polyfit(x, signal, 1)
+    return float(np.std(signal - (slope * x + intercept)))
+
+
 class Downconverter:
     """Descente numérique du ton IF de +F_IF vers 0 Hz (streaming continu).
 

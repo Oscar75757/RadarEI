@@ -57,9 +57,24 @@ WINDOW_S    = 20.0   # durée de la fenêtre glissante en secondes (résolution 
 OVERLAP     = 0.9    # chevauchement (90 % → nouvelle estimation toutes les 2 s)
 
 # --- Seuils d'alerte ---
-APNEA_DELAY_S  = 15   # secondes sans détection → alerte apnée
+# APNEA_DELAY_S = temps de CONFIRMATION sous le seuil d'amplitude avant l'alarme.
+# La fenêtre d'amplitude (AMP_WINDOW_S ~5 s) absorbe déjà ~5 s avant de passer
+# sous le seuil ; l'alarme tombe donc ~5 s + APNEA_DELAY_S après l'arrêt réel.
+APNEA_DELAY_S  = 2    # secondes sous le seuil → alerte apnée
 BRADY_RPM      = 8    # resp/min minimum normal
 TACHY_RPM      = 30   # resp/min maximum normal
+
+# --- Détection d'apnée par ABSENCE d'oscillation ---
+# L'apnée ne se voit pas au niveau absolu (le passe-haut fait retomber un
+# signal figé vers zéro), mais à la CHUTE D'AMPLITUDE du signal filtré.
+# On mesure l'amplitude (écart-type) sur une courte fenêtre glissante ; sous le
+# seuil = plus de respiration. Seuil à calibrer selon distance/gain (l'amplitude
+# est affichée en direct pour faciliter le réglage).
+AMP_WINDOW_S     = 5.0    # fenêtre glissante de mesure d'amplitude (s) — mesurée
+                          # sur la phase BRUTE détrendée (réaction ~5 s à l'apnée,
+                          # pas la décroissance ~10 s du passe-haut). Couvre au moins
+                          # une demi-période de la respiration la plus lente (~6/min).
+APNEA_AMP_THRESH = 0.05   # rad (écart-type) — sous ce seuil = pas de respiration
 
 # --- Lissage temporel ---
 SMOOTHING_N = 3   # nombre d'estimations à moyenner
