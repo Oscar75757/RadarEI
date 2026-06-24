@@ -26,6 +26,7 @@ import collections
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
 
 import config
 from hardware.discovery   import resolve_master
@@ -34,6 +35,7 @@ from hardware.rx          import config_master_rx, capture
 from processing.phase     import decimate, Downconverter, PhaseTracker, oscillation_amplitude
 from processing.filters   import RespiratoryFilter
 from processing.estimator import RateEstimator
+from processing.peak_rate  import PeakRateEstimator
 from processing.alerts    import AlertSystem
 from processing.logger    import SessionLogger
 
@@ -48,7 +50,8 @@ def main():
     mixer     = Downconverter()
     tracker   = PhaseTracker()
     bandpass  = RespiratoryFilter()
-    estimator = RateEstimator()
+    estimator = RateEstimator()       # FFT — calculs & alertes (robuste)
+    peak_rate = PeakRateEstimator()   # intervalle entre pics — affichage (réactif)
     alerter   = AlertSystem()
     logger    = SessionLogger()
     print(f"[log] Journalisation → {logger.path}")
@@ -84,7 +87,22 @@ def main():
     ax2.set_xlabel("Temps (s)")
     ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper left", fontsize=8)
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.09, right=0.97, top=0.93, bottom=0.17, hspace=0.12)
+
+    # --- Bouton de réinitialisation de la vue ---
+    # Purge l'historique AFFICHÉ (onde + amplitude) pour évacuer d'un coup les
+    # pics de mise en place / de démarrage : l'auto-échelle se recale aussitôt
+    # sur la respiration courante. N'affecte NI le rythme NI la détection d'apnée.
+    def reset_view(event=None):
+        wave.clear();     wave.extend([0.0] * n_plot)
+        amp_hist.clear(); amp_hist.extend([0.0] * n_amp_hist)
+
+    btn_ax = fig.add_axes([0.42, 0.04, 0.18, 0.055])
+    reset_btn = Button(btn_ax, "Réinitialiser la vue (r)")
+    reset_btn.on_clicked(reset_view)
+    fig.canvas.mpl_connect("key_press_event",
+                           lambda e: reset_view() if e.key == "r" else None)
+
     plt.show()
 
     print(">>> Respire normalement. Teste l'apnée (> 15 s sans bouger).")
@@ -110,12 +128,14 @@ def main():
             for v in phase:
                 raw_win.append(float(v))   # phase brute → détection d'apnée
 
-            r = estimator.push(filt)
-            if r is not None:
-                last_rate = r
-
             # amplitude d'oscillation sur la phase brute détrendée (réaction rapide)
             amplitude = oscillation_amplitude(np.asarray(raw_win))
+
+            peak_rate.update(filt, amplitude)   # rythme AFFICHAGE (intervalle pics)
+
+            r = estimator.push(filt)            # rythme ALERTES (FFT robuste)
+            if r is not None:
+                last_rate = r
 
             now = time.time()
 
@@ -140,8 +160,9 @@ def main():
                 for ax in (ax1, ax2):
                     ax.relim(); ax.autoscale_view(scalex=False)
 
-                rate_str = f"{last_rate:.1f} resp/min" if last_rate is not None else "— resp/min"
-                title.set_text(f"Rythme : {rate_str}    |    Amplitude : {amplitude:.3f} rad")
+                disp_rate = peak_rate.rate()   # rythme réactif (intervalle entre pics)
+                rate_str = f"{disp_rate:.1f} resp/min" if disp_rate is not None else "— resp/min"
+                title.set_text(f"Rythme (live) : {rate_str}    |    Amplitude : {amplitude:.3f} rad")
                 if alert_on:
                     banner.set_text("  ".join("⚠️ " + a.split(" — ")[0] for a in alerts))
                     banner.set_color("crimson")

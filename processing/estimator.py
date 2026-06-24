@@ -39,13 +39,27 @@ class RateEstimator:
         window  = np.hanning(len(signal))
         spectrum = np.abs(np.fft.rfft(signal * window))
         freqs    = np.fft.rfftfreq(len(signal), d=1.0 / config.DECIMATED_FS)
+        df       = freqs[1] - freqs[0]
 
         # Restriction à la bande respiratoire
-        mask = (freqs >= config.F_LOW) & (freqs <= config.F_HIGH)
-        if not mask.any():
+        band = np.where((freqs >= config.F_LOW) & (freqs <= config.F_HIGH))[0]
+        if band.size == 0:
             return None
 
-        peak_freq = freqs[mask][np.argmax(spectrum[mask])]
+        # Indice du pic dans le spectre complet
+        k = band[np.argmax(spectrum[band])]
+
+        # Interpolation parabolique : estime la fréquence ENTRE les points FFT
+        # (récupère la précision perdue avec une fenêtre courte).
+        if 0 < k < len(spectrum) - 1:
+            a, b, c = spectrum[k - 1], spectrum[k], spectrum[k + 1]
+            denom = a - 2 * b + c
+            delta = 0.5 * (a - c) / denom if denom != 0 else 0.0
+            delta = float(np.clip(delta, -0.5, 0.5))
+        else:
+            delta = 0.0
+
+        peak_freq = freqs[k] + delta * df
         rate_rpm  = peak_freq * 60.0
 
         self._rate_history.append(rate_rpm)

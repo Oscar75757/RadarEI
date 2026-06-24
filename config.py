@@ -52,9 +52,22 @@ FILTER_ORDER = 2      # ordre du filtre Butterworth
 F_LOW   = 0.1     # Hz — 6 resp/min  (seuil bas pathologique)
 F_HIGH  = 0.8     # Hz — 48 resp/min (seuil haut pathologique)
 
-# --- Fenêtre d'analyse FFT ---
-WINDOW_S    = 20.0   # durée de la fenêtre glissante en secondes (résolution ~3 resp/min)
-OVERLAP     = 0.9    # chevauchement (90 % → nouvelle estimation toutes les 2 s)
+# --- Fenêtre d'analyse FFT (CALCULS + ALERTES) ---
+# Fenêtre raccourcie pour réduire la latence ; la résolution plus grossière
+# (~4 resp/min) est récupérée par interpolation parabolique du pic FFT, qui
+# estime la fréquence ENTRE les points de la FFT. Lissage réduit à 2.
+WINDOW_S    = 14.0   # durée de la fenêtre glissante (s)
+OVERLAP     = 0.9    # chevauchement (90 % → nouvelle estimation toutes les ~1.4 s)
+
+# --- Rythme temps-réel pour AFFICHAGE (méthode temporelle, levier 4) ---
+# Mesure le rythme par l'intervalle entre pics d'inspiration successifs : se met
+# à jour à CHAQUE respiration (quasi temps-réel), moyenné sur les derniers pics
+# pour limiter les fluctuations. Réservé à l'affichage (bruité si irrégulier).
+PEAK_RATE_NPEAKS     = 3      # nombre de pics d'inspiration moyennés
+PEAK_HYSTERESIS_FRAC = 0.5    # seuil de confirmation d'un pic = frac × amplitude
+PEAK_MIN_DELTA       = 0.02   # seuil mini absolu (rad) — anti-bruit
+PEAK_REFRACTORY_S    = 1.2    # intervalle mini entre 2 pics (≈ 50 resp/min max)
+PEAK_STALE_S         = 12.0   # sans pic depuis ce délai → rythme affiché = —
 
 # --- Seuils d'alerte ---
 # APNEA_DELAY_S = temps de CONFIRMATION sous le seuil d'amplitude avant l'alarme.
@@ -77,7 +90,7 @@ AMP_WINDOW_S     = 5.0    # fenêtre glissante de mesure d'amplitude (s) — mes
 APNEA_AMP_THRESH = 0.05   # rad (écart-type) — sous ce seuil = pas de respiration
 
 # --- Lissage temporel ---
-SMOOTHING_N = 3   # nombre d'estimations à moyenner
+SMOOTHING_N = 2   # nombre d'estimations FFT à moyenner
 
 # --- Affichage ---
 PLOT_WINDOW_S = 30   # durée visible sur le graphe temps-réel (secondes)
