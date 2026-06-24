@@ -47,3 +47,40 @@ class AlertSystem:
                 print(f"  ⚠️  {a}")
         else:
             print(f"  ✅ {status}")
+
+
+class CardiacAlertSystem:
+    """Surveille le rythme cardiaque et déclenche des alertes console.
+
+    Pas d'alerte d'asystolie par timeout : le signal cardiaque radar est bruité
+    et un silence de signal ne peut pas être distingué d'une perte de contact.
+    """
+
+    def evaluate(self, rate_bpm: float | None) -> list[str]:
+        if rate_bpm is None:
+            return []
+
+        alerts = []
+        if rate_bpm < config.BRADY_BPM:
+            alerts.append(
+                f"BRADYCARDIE — rythme trop lent : {rate_bpm:.0f} bpm "
+                f"(min : {config.BRADY_BPM})"
+            )
+        elif rate_bpm > config.TACHY_BPM:
+            alerts.append(
+                f"TACHYCARDIE — rythme trop rapide : {rate_bpm:.0f} bpm "
+                f"(max : {config.TACHY_BPM})"
+            )
+        return alerts
+
+    def print_status(self, rate_bpm: float | None, alerts: list[str]) -> None:
+        if rate_bpm is not None:
+            status = f"Cardiaque : {rate_bpm:.0f} bpm"
+        else:
+            status = "Cardiaque : calcul en cours..."
+
+        if alerts:
+            for a in alerts:
+                print(f"  ⚠️  {a}")
+        else:
+            print(f"  ✅ {status}")

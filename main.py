@@ -18,10 +18,10 @@ import config
 from hardware.discovery   import resolve_master, resolve_rx2
 from hardware.tx          import init_master, start_tx, stop_tx
 from hardware.rx          import config_master_rx, init_second_rx, capture
-from processing.phase     import decimate, extract_phase, remove_dc
-from processing.filters   import RespiratoryFilter
+from processing.phase     import decimate, extract_phase, remove_dc, Downconverter, PhaseTracker
+from processing.filters   import RespiratoryFilter, CardiacFilter
 from processing.estimator import RateEstimator
-from processing.alerts    import AlertSystem
+from processing.alerts    import AlertSystem, CardiacAlertSystem
 from display.plot_live    import LivePlot
 
 
@@ -43,9 +43,20 @@ def main():
         print("[RX2] 2e récepteur désactivé (USE_SECOND_RX = False)")
 
     # --- Initialisation traitement ---
+    mixer       = Downconverter()      # descend le ton IF (+100 kHz) → 0 Hz
+    tracker     = PhaseTracker()       # phase continue entre buffers
     resp_filter = RespiratoryFilter()
     estimator   = RateEstimator()
     alert_sys   = AlertSystem()
+
+    cardiac_filter    = CardiacFilter()
+    cardiac_estimator = RateEstimator(
+        f_low=config.CARDIAC_F_LOW,
+        f_high=config.CARDIAC_F_HIGH,
+        window_s=config.CARDIAC_WINDOW_S,
+        smoothing_n=config.CARDIAC_SMOOTHING_N,
+    )
+    cardiac_alert = CardiacAlertSystem()
 
     # --- Affichage ---
     plot = LivePlot()
@@ -63,25 +74,32 @@ def main():
             if sdr_rx2 is not None:
                 _iq2 = capture(sdr_rx2)   # noqa: F841 — réservé pour la fusion
 
-            # 2. Décimation 1 MSPS → DECIMATED_FS
-            iq_dec = decimate(iq)
+            # 2. Descente IF → 0 Hz (indispensable avant décimation)
+            iq_bb  = mixer.process(iq)
 
-            # 3. Extraction de phase + suppression DC
-            phase = extract_phase(iq_dec)
+            # 3. Décimation 1 MSPS → DECIMATED_FS
+            iq_dec = decimate(iq_bb)
+
+            # 4. Extraction de phase continue + suppression DC
+            phase = tracker.process(iq_dec)
             phase = remove_dc(phase)
 
-            # 4. Filtre passe-bande respiratoire
-            phase_filtered = resp_filter.apply(phase)
+            # 5. Filtres passe-bande (resp + cardiaque sur la même phase brute)
+            resp_filtered    = resp_filter.apply(phase)
+            cardiac_filtered = cardiac_filter.apply(phase)
 
-            # 5. Estimation du rythme (None tant que la fenêtre n'est pas pleine)
-            rate_rpm = estimator.push(phase_filtered)
+            # 6. Estimation des rythmes
+            rate_rpm = estimator.push(resp_filtered)
+            rate_bpm = cardiac_estimator.push(cardiac_filtered)
 
-            # 6. Alertes
-            alerts = alert_sys.evaluate(rate_rpm)
-            alert_sys.print_status(rate_rpm, alerts)
+            # 7. Alertes
+            resp_alerts    = alert_sys.evaluate(rate_rpm)
+            cardiac_alerts = cardiac_alert.evaluate(rate_bpm)
+            alert_sys.print_status(rate_rpm, resp_alerts)
+            cardiac_alert.print_status(rate_bpm, cardiac_alerts)
 
-            # 7. Affichage temps-réel
-            plot.update(phase_filtered, rate_rpm)
+            # 8. Affichage temps-réel (3 panneaux)
+            plot.update(resp_filtered, cardiac_filtered, rate_rpm, rate_bpm)
 
     except KeyboardInterrupt:
         print("\n\nArrêt demandé.")

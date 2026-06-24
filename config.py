@@ -8,12 +8,12 @@
 # Le code retrouve tout seul l'URI courant de chaque rôle (hardware/discovery.py).
 # Pluto 1 = MAÎTRE : émet la CW ET reçoit (canal cohérent, LO partagé).
 # Pluto 2 = récepteur SEUL : 2e point de vue, synchronisé en logiciel (phase 1d).
-SERIAL_MASTER = "104473dcbc0d000b0400340077bd47a811"   # maître TX+RX (AD9364, débridé)
-SERIAL_RX2    = "104473dcbc0d000b130035004db947f3a5"   # récepteur seul
+SERIAL_MASTER = "104473b80a160002ebff25003058be8bb8"   # maître TX+RX (usb:0.3.5)
+SERIAL_RX2    = "104473dcbc0d000b130035004db947f3a5"   # récepteur seul (non branché)
 
 # Active le 2e récepteur (diversité spatiale). False = on travaille sur le seul
 # Pluto maître (recommandé pour la mise au point de la phase 1).
-USE_SECOND_RX = True
+USE_SECOND_RX = False
 
 # --- Paramètres RF ---
 FC          = 2_400_000_000   # Fréquence porteuse : 2.4 GHz
@@ -52,7 +52,20 @@ BRADY_RPM      = 8    # resp/min minimum normal
 TACHY_RPM      = 30   # resp/min maximum normal
 
 # --- Lissage temporel ---
-SMOOTHING_N = 3   # nombre d'estimations à moyenner
+SMOOTHING_N = 3   # nombre d'estimations à moyenner (respiratoire)
+
+# --- Filtre passe-bande cardiaque ---
+CARDIAC_F_LOW        = 0.8   # Hz — 48 bpm  (juste au-dessus de la bande resp)
+CARDIAC_F_HIGH       = 2.5   # Hz — 150 bpm (tachycardie supra-ventriculaire)
+CARDIAC_FILTER_ORDER = 6     # ordre 6 → meilleur rejet des harmoniques resp qu'ordre 4
+
+# --- Fenêtre FFT cardiaque ---
+CARDIAC_WINDOW_S    = 15.0   # s — Δf ≈ 0.067 Hz ≈ 4 bpm
+CARDIAC_SMOOTHING_N = 5      # lissage sur 5 estimations → jitter ~1-2 bpm
+
+# --- Seuils d'alerte cardiaque ---
+BRADY_BPM = 40    # bpm (bradycardie sévère)
+TACHY_BPM = 150   # bpm (tachycardie soutenue)
 
 # --- Affichage ---
 PLOT_WINDOW_S = 30   # durée visible sur le graphe temps-réel (secondes)
