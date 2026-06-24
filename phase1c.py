@@ -14,8 +14,8 @@ Chaque évaluation est journalisée dans logs/session_*.csv.
 
 Affichage à deux panneaux :
   - haut : onde respiratoire filtrée (rouge si alerte active) ;
-  - bas  : amplitude (écart-type glissant) vs seuil d'apnée — pour visualiser
-           l'apnée et calibrer APNEA_AMP_THRESH.
+  - bas  : amplitude (crête-à-crête glissant) vs seuil d'apnée adaptatif —
+           le seuil (relatif à la respiration) se recale tout seul.
 
 Utilisation :
     source .venv/bin/activate
@@ -37,6 +37,7 @@ from processing.filters   import RespiratoryFilter
 from processing.estimator import RateEstimator
 from processing.peak_rate  import PeakRateEstimator
 from processing.alerts    import AlertSystem
+from processing.adaptive  import AdaptiveApneaThreshold
 from processing.logger    import SessionLogger
 
 
@@ -53,6 +54,7 @@ def main():
     estimator = RateEstimator()       # FFT — calculs & alertes (robuste)
     peak_rate = PeakRateEstimator()   # intervalle entre pics — affichage (réactif)
     alerter   = AlertSystem()
+    adaptive  = AdaptiveApneaThreshold()   # seuil d'apnée auto-calibré
     logger    = SessionLogger()
     print(f"[log] Journalisation → {logger.path}")
 
@@ -81,39 +83,58 @@ def main():
                       bbox=dict(boxstyle="round", fc="white", ec="gray", alpha=0.8))
 
     (line_amp,) = ax2.plot(t_amp, list(amp_hist), color="steelblue", lw=1.4)
-    ax2.axhline(config.APNEA_AMP_THRESH, color="red", ls="--", lw=1.0,
-                label=f"seuil apnée ({config.APNEA_AMP_THRESH} rad)")
+    thr_line = ax2.axhline(config.APNEA_AMP_EPS, color="red", ls="--", lw=1.0,
+                           label="seuil apnée (adaptatif)")
+    warmup_text = ax2.text(0.5, 0.5, "", transform=ax2.transAxes, ha="center",
+                           va="center", fontsize=14, fontweight="bold",
+                           color="darkorange")
     ax2.set_ylabel("Amplitude (rad)")
     ax2.set_xlabel("Temps (s)")
     ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper left", fontsize=8)
     fig.subplots_adjust(left=0.09, right=0.97, top=0.93, bottom=0.17, hspace=0.12)
 
-    # --- Bouton de réinitialisation de la vue ---
-    # Purge l'historique AFFICHÉ (onde + amplitude) pour évacuer d'un coup les
-    # pics de mise en place / de démarrage : l'auto-échelle se recale aussitôt
-    # sur la respiration courante. N'affecte NI le rythme NI la détection d'apnée.
+    # --- Boutons : réinitialiser la vue / re-calibrer ---
+    # reset_view : purge l'historique AFFICHÉ (onde + amplitude) pour évacuer les
+    #   pics de mise en place ; n'affecte NI le rythme NI la détection.
+    # recalibrate : relance les 10 s de calibration du seuil adaptatif — utile
+    #   après un changement d'antenne/position (re-cale instantanément la baseline).
     def reset_view(event=None):
         wave.clear();     wave.extend([0.0] * n_plot)
         amp_hist.clear(); amp_hist.extend([0.0] * n_amp_hist)
 
-    btn_ax = fig.add_axes([0.42, 0.04, 0.18, 0.055])
-    reset_btn = Button(btn_ax, "Réinitialiser la vue (r)")
+    def recalibrate(event=None):
+        adaptive.recalibrate()
+        print(">>> Re-calibration du seuil demandée (10 s).")
+
+    def on_key(e):
+        if   e.key == "r": reset_view()
+        elif e.key == "c": recalibrate()
+
+    btn_reset_ax = fig.add_axes([0.30, 0.04, 0.18, 0.055])
+    reset_btn = Button(btn_reset_ax, "Réinitialiser la vue (r)")
     reset_btn.on_clicked(reset_view)
-    fig.canvas.mpl_connect("key_press_event",
-                           lambda e: reset_view() if e.key == "r" else None)
+
+    btn_recal_ax = fig.add_axes([0.52, 0.04, 0.18, 0.055])
+    recal_btn = Button(btn_recal_ax, "Re-calibrer (c)")
+    recal_btn.on_clicked(recalibrate)
+
+    fig.canvas.mpl_connect("key_press_event", on_key)
 
     plt.show()
 
-    print(">>> Respire normalement. Teste l'apnée (> 15 s sans bouger).")
-    print(">>> Ctrl+C pour arrêter.\n")
+    print(f">>> Calibration : {config.WARMUP_S:.0f} s pour t'installer et respirer normalement.")
+    print(">>> Ensuite : surveillance active.")
+    print(">>> Touches : 'r' réinitialise la vue | 'c' re-calibre le seuil | Ctrl+C arrête.\n")
 
-    last_rate  = None
-    amplitude  = 0.0
-    last_draw  = 0.0
-    last_eval  = 0.0
-    DRAW_EVERY = 0.16   # s
-    EVAL_EVERY = 1.0    # s — cadence alertes + journal + console
+    last_rate   = None
+    amplitude   = 0.0
+    last_draw   = 0.0
+    last_eval   = 0.0
+    t_prev      = time.time()
+    was_warming = True   # pour réinitialiser la vue à la fin de la calibration
+    DRAW_EVERY  = 0.16   # s
+    EVAL_EVERY  = 1.0    # s — cadence alertes + journal + console
 
     try:
         while True:
@@ -138,37 +159,70 @@ def main():
                 last_rate = r
 
             now = time.time()
+            dt  = min(now - t_prev, 1.0)   # clamp anti-grand-pas au démarrage
+            t_prev = now
 
-            # --- Alertes + journal + console (cadence lente) ---
-            if now - last_eval >= EVAL_EVERY:
+            # Seuil adaptatif : état (warmup/active), respiration, seuil, restant
+            state, breathing, threshold, remaining = adaptive.update(amplitude, dt)
+            warming = (state == "warmup")
+
+            # Fin de la calibration → on repart sur une vue propre
+            if was_warming and not warming:
+                reset_view()
+            was_warming = warming
+
+            # --- Alertes + journal + console (seulement hors calibration) ---
+            if warming:
+                alerts = []
+            elif now - last_eval >= EVAL_EVERY:
                 last_eval = now
-                alerts = alerter.evaluate(last_rate, amplitude)
+                alerts = alerter.evaluate(last_rate, breathing)
                 logger.log(last_rate, amplitude, alerts)
-                print("  " + alerter.status_line(last_rate, amplitude, alerts))
+                print("  " + alerter.status_line(last_rate, amplitude, alerts, threshold))
             else:
-                alerts = alerter.evaluate(last_rate, amplitude)  # MAJ chrono apnée
+                alerts = alerter.evaluate(last_rate, breathing)  # MAJ chrono apnée
 
             # --- Affichage (cadence rapide, découplé de la capture) ---
             if now - last_draw >= DRAW_EVERY:
                 last_draw = now
-                amp_hist.append(amplitude)
-                alert_on = bool(alerts)
 
                 line_wave.set_ydata(np.array(wave))
-                line_wave.set_color("crimson" if alert_on else "seagreen")
-                line_amp.set_ydata(np.array(amp_hist))
-                for ax in (ax1, ax2):
-                    ax.relim(); ax.autoscale_view(scalex=False)
+                ax1.relim(); ax1.autoscale_view(scalex=False)
 
-                disp_rate = peak_rate.rate()   # rythme réactif (intervalle entre pics)
-                rate_str = f"{disp_rate:.1f} resp/min" if disp_rate is not None else "— resp/min"
-                title.set_text(f"Rythme (live) : {rate_str}    |    Amplitude : {amplitude:.3f} rad")
-                if alert_on:
-                    banner.set_text("  ".join("⚠️ " + a.split(" — ")[0] for a in alerts))
-                    banner.set_color("crimson")
+                if warming:
+                    # Message de calibration à la place de la courbe d'amplitude
+                    line_amp.set_visible(False)
+                    thr_line.set_visible(False)
+                    warmup_text.set_visible(True)
+                    warmup_text.set_text(
+                        "Prenez place et commencez à respirer normalement\n"
+                        f"(calibration dans {remaining:.0f} s)")
+                    line_wave.set_color("seagreen")
+                    title.set_text("Calibration en cours…")
+                    banner.set_text("⏳ Calibration")
+                    banner.set_color("darkorange")
                 else:
-                    banner.set_text("✅ Normal")
-                    banner.set_color("green")
+                    line_amp.set_visible(True)
+                    thr_line.set_visible(True)
+                    warmup_text.set_visible(False)
+
+                    amp_hist.append(amplitude)
+                    alert_on = bool(alerts)
+                    line_amp.set_ydata(np.array(amp_hist))
+                    thr_line.set_ydata([threshold, threshold])
+                    line_wave.set_color("crimson" if alert_on else "seagreen")
+                    ax2.relim(); ax2.autoscale_view(scalex=False)
+
+                    disp_rate = peak_rate.rate()   # rythme réactif (intervalle entre pics)
+                    rate_str = f"{disp_rate:.1f} resp/min" if disp_rate is not None else "— resp/min"
+                    title.set_text(f"Rythme (live) : {rate_str}    |    "
+                                   f"Amplitude : {amplitude:.3f} | seuil : {threshold:.3f} rad")
+                    if alert_on:
+                        banner.set_text("  ".join("⚠️ " + a.split(" — ")[0] for a in alerts))
+                        banner.set_color("crimson")
+                    else:
+                        banner.set_text("✅ Normal")
+                        banner.set_color("green")
 
                 fig.canvas.draw_idle()
                 fig.canvas.flush_events()

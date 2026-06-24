@@ -17,11 +17,14 @@ class AlertSystem:
     def __init__(self):
         self._low_amp_since = None   # instant depuis lequel l'amplitude est basse
 
-    def evaluate(self, rate_rpm: float | None, amplitude: float) -> list[str]:
-        """Retourne la liste des alertes actives (vide = tout va bien)."""
+    def evaluate(self, rate_rpm: float | None, breathing: bool) -> list[str]:
+        """Retourne la liste des alertes actives (vide = tout va bien).
+
+        `breathing` est la décision « le patient respire » fournie par le seuil
+        adaptatif (AdaptiveApneaThreshold), pas une comparaison à un seuil fixe.
+        """
         alerts = []
         now = time.time()
-        breathing = amplitude >= config.APNEA_AMP_THRESH
 
         if not breathing:
             # Pas de mouvement respiratoire : on chronomètre le silence.
@@ -52,10 +55,12 @@ class AlertSystem:
         return alerts
 
     def status_line(self, rate_rpm: float | None, amplitude: float,
-                    alerts: list[str]) -> str:
+                    alerts: list[str], threshold: float | None = None) -> str:
         """Ligne de statut lisible pour la console."""
         rate_str = f"{rate_rpm:4.1f} rpm" if rate_rpm is not None else "  -- rpm"
         head = f"Rythme {rate_str} | ampl {amplitude:.3f} rad"
+        if threshold is not None:
+            head += f" | seuil {threshold:.3f}"
         if alerts:
             return "⚠️  " + head + "  ||  " + "  ;  ".join(alerts)
         return "✅  " + head
