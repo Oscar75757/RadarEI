@@ -24,6 +24,7 @@ respiratoire reste valable : pendant l'apnée, l'onde filtrée s'aplatit.
 """
 
 import collections
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -68,9 +69,12 @@ def main():
     print(">>> Respire normalement devant les antennes (~1 m).")
     print(">>> 1er rythme fiable après ~20 s. Ctrl+C pour arrêter.\n")
 
-    last_rate = None
+    last_rate  = None
+    last_draw  = 0.0
+    DRAW_EVERY = 0.16   # s — redessine ~6 fois/s (découplé de la capture)
     try:
         while True:
+            # --- Capture + traitement à CHAQUE tour (continuité de la descente IF) ---
             iq     = capture(sdr)
             iq_bb  = mixer.process(iq)        # descente IF
             iq_dec = decimate(iq_bb)          # → 100 Hz
@@ -85,16 +89,21 @@ def main():
                 last_rate = rate
                 print(f"  Rythme respiratoire : {rate:5.1f} resp/min")
 
-            line.set_ydata(np.array(buf))
-            ax.relim()
-            ax.autoscale_view(scalex=False)
-            if last_rate is None:
-                rate_text.set_text("Rythme : — resp/min   (acquisition en cours…)")
-            else:
-                rate_text.set_text(f"Rythme : {last_rate:.1f} resp/min")
-            fig.canvas.draw_idle()
-            fig.canvas.flush_events()
-            plt.pause(0.001)
+            # --- Affichage throttlé : la boucle reste plus rapide que le temps réel
+            #     et vide la file de buffers → pas de retard qui s'accumule. ---
+            now = time.time()
+            if now - last_draw >= DRAW_EVERY:
+                last_draw = now
+                line.set_ydata(np.array(buf))
+                ax.relim()
+                ax.autoscale_view(scalex=False)
+                if last_rate is None:
+                    rate_text.set_text("Rythme : — resp/min   (acquisition en cours…)")
+                else:
+                    rate_text.set_text(f"Rythme : {last_rate:.1f} resp/min")
+                fig.canvas.draw_idle()
+                fig.canvas.flush_events()
+                plt.pause(0.001)
 
     except KeyboardInterrupt:
         print("\nArrêt demandé.")

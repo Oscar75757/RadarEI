@@ -37,14 +37,24 @@ F_IF        = 100_000         # 100 kHz — bien au-delà du notch DC du récept
 DECIMATION    = 10_000        # facteur de décimation
 DECIMATED_FS  = SAMPLE_RATE // DECIMATION   # = 100 Hz effectifs
 
-# --- Filtre passe-bande respiratoire ---
+# --- Filtre d'AFFICHAGE (suppression de dérive, faible latence) ---
+# Coupure basse volontairement plus basse que la bande respiratoire : une
+# respiration lente (~0.1-0.13 Hz) tombe sinon sur le bord du filtre, où le
+# retard de groupe explose (jusqu'à ~5 s à 6-7 resp/min). À 0.05 Hz + ordre 2,
+# le retard reste sous la seconde. La dérive du corps (< 0.05 Hz) est éliminée.
+FILTER_LOW   = 0.05   # Hz — passe-haut du filtre d'affichage
+FILTER_HIGH  = 0.8    # Hz — passe-bas (anti-jitter)
+FILTER_ORDER = 2      # ordre du filtre Butterworth
+
+# --- Bande de DÉTECTION du rythme (recherche du pic FFT) ---
+# C'est la FFT qui restreint à la vraie gamme respiratoire : la mesure du
+# rythme reste juste même si le filtre laisse passer un peu de dérive lente.
 F_LOW   = 0.1     # Hz — 6 resp/min  (seuil bas pathologique)
 F_HIGH  = 0.8     # Hz — 48 resp/min (seuil haut pathologique)
-FILTER_ORDER = 4  # ordre du filtre Butterworth
 
 # --- Fenêtre d'analyse FFT ---
-WINDOW_S    = 20.0   # durée de la fenêtre glissante en secondes
-OVERLAP     = 0.5    # chevauchement (50 % → mise à jour toutes les 10 s)
+WINDOW_S    = 20.0   # durée de la fenêtre glissante en secondes (résolution ~3 resp/min)
+OVERLAP     = 0.9    # chevauchement (90 % → nouvelle estimation toutes les 2 s)
 
 # --- Seuils d'alerte ---
 APNEA_DELAY_S  = 15   # secondes sans détection → alerte apnée
