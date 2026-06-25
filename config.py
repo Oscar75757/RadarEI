@@ -21,7 +21,10 @@ TX_GAIN     = -10             # Gain TX en dBm (entre -89 et 0)
 RX_GAIN     = 40              # Gain RX en dB  (mode manuel)
 SAMPLE_RATE = 1_000_000       # Taux d'échantillonnage : 1 MSPS
 RX_BW       = 500_000         # Bande passante RX : doit laisser passer le ton IF (±F_IF)
-RX_BUFFER   = 1024 * 64      # Taille du buffer IQ par capture
+RX_BUFFER   = 100_000        # Taille du buffer IQ par capture — MULTIPLE de DECIMATION
+                             # (10 000) → décimation sans reste, base de temps EXACTE.
+                             # Indispensable pour mesurer durées/rythmes et l'IAH d'une
+                             # nuit (sinon ~8.5 % du signal jeté = temps comprimé). 0.1 s.
 
 # --- Fréquence intermédiaire (architecture à ton décalé) ---
 # On émet à fc + F_IF (pas à DC) pour échapper au "DC offset tracking" du Pluto,

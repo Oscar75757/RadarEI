@@ -39,9 +39,15 @@ from processing.peak_rate  import PeakRateEstimator
 from processing.alerts    import AlertSystem
 from processing.adaptive  import AdaptiveApneaThreshold
 from processing.logger    import SessionLogger
+from processing.recording import RecordWriter
 
 
-def main():
+def _fmt_hms(seconds: float) -> str:
+    s = int(seconds)
+    return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+
+
+def main(record: bool = False, duration_h: float | None = None):
     print("=== Phase 1c — alertes & journalisation ===\n")
 
     sdr = init_master(resolve_master())
@@ -59,6 +65,12 @@ def main():
     print(f"[log] Journalisation → {logger.path}")
 
     fs = config.DECIMATED_FS
+
+    recorder = None
+    if record:
+        recorder = RecordWriter(fs, duration_h=duration_h)
+        print(f"[rec] Enregistrement → recordings/{recorder.base}_*  "
+              f"({'durée ' + str(duration_h) + ' h' if duration_h else 'arrêt manuel'})")
 
     # --- Tampons ---
     n_plot  = int(config.PLOT_WINDOW_S * fs)
@@ -127,14 +139,15 @@ def main():
     print(">>> Ensuite : surveillance active.")
     print(">>> Touches : 'r' réinitialise la vue | 'c' re-calibre le seuil | Ctrl+C arrête.\n")
 
-    last_rate   = None
-    amplitude   = 0.0
-    last_draw   = 0.0
-    last_eval   = 0.0
-    t_prev      = time.time()
-    was_warming = True   # pour réinitialiser la vue à la fin de la calibration
-    DRAW_EVERY  = 0.16   # s
-    EVAL_EVERY  = 1.0    # s — cadence alertes + journal + console
+    last_rate    = None
+    amplitude    = 0.0
+    last_draw    = 0.0
+    last_eval    = 0.0
+    t_prev       = time.time()
+    was_warming  = True   # pour réinitialiser la vue à la fin de la calibration
+    apnea_start  = None   # début de l'apnée en cours (enregistrement)
+    DRAW_EVERY   = 0.16   # s
+    EVAL_EVERY   = 1.0    # s — cadence alertes + journal + console
 
     try:
         while True:
@@ -143,6 +156,9 @@ def main():
             iq_dec = decimate(iq_bb)
             phase  = tracker.process(iq_dec)
             filt   = bandpass.apply(phase)
+
+            if recorder is not None:
+                recorder.write(phase)      # signal source enregistré sur disque
 
             for v in filt:
                 wave.append(float(v))      # onde filtrée → affichage
@@ -182,9 +198,27 @@ def main():
             else:
                 alerts = alerter.evaluate(last_rate, breathing)  # MAJ chrono apnée
 
+            # --- Enregistrement : repères d'apnée + arrêt sur durée ---
+            if recorder is not None:
+                apnea_now = any("APNÉE" in a for a in alerts)
+                if apnea_now and apnea_start is None:
+                    apnea_start = recorder.signal_time()
+                elif not apnea_now and apnea_start is not None:
+                    recorder.log_apnea(apnea_start, recorder.signal_time())
+                    apnea_start = None
+                if recorder.duration_reached():
+                    print("\nDurée d'enregistrement atteinte.")
+                    break
+
             # --- Affichage (cadence rapide, découplé de la capture) ---
             if now - last_draw >= DRAW_EVERY:
                 last_draw = now
+
+                rec_str = ""
+                if recorder is not None:
+                    el = _fmt_hms(recorder.elapsed())
+                    rec_str = (f"● REC {el}/{_fmt_hms(duration_h * 3600)}  |  "
+                               if duration_h else f"● REC {el}  |  ")
 
                 line_wave.set_ydata(np.array(wave))
                 ax1.relim(); ax1.autoscale_view(scalex=False)
@@ -198,7 +232,7 @@ def main():
                         "Prenez place et commencez à respirer normalement\n"
                         f"(calibration dans {remaining:.0f} s)")
                     line_wave.set_color("seagreen")
-                    title.set_text("Calibration en cours…")
+                    title.set_text(rec_str + "Calibration en cours…")
                     banner.set_text("⏳ Calibration")
                     banner.set_color("darkorange")
                 else:
@@ -215,7 +249,7 @@ def main():
 
                     disp_rate = peak_rate.rate()   # rythme réactif (intervalle entre pics)
                     rate_str = f"{disp_rate:.1f} resp/min" if disp_rate is not None else "— resp/min"
-                    title.set_text(f"Rythme (live) : {rate_str}    |    "
+                    title.set_text(rec_str + f"Rythme (live) : {rate_str}    |    "
                                    f"Amplitude : {amplitude:.3f} | seuil : {threshold:.3f} rad")
                     if alert_on:
                         banner.set_text("  ".join("⚠️ " + a.split(" — ")[0] for a in alerts))
@@ -233,6 +267,14 @@ def main():
     finally:
         stop_tx(sdr)
         logger.close()
+        if recorder is not None:
+            if apnea_start is not None:                 # apnée en cours à l'arrêt
+                recorder.log_apnea(apnea_start, recorder.signal_time())
+            recorder.close()
+            print(f"\nEnregistrement terminé : recordings/{recorder.base}_phase.f32")
+            print(f"  Durée : {_fmt_hms(recorder.signal_time())}  |  "
+                  f"apnées repérées en direct : {recorder.n_apneas}")
+            print(f"  → Analyse : python3 analyze.py")
         print(f"Journal enregistré : {logger.path}")
         print("Phase 1c terminée.")
 

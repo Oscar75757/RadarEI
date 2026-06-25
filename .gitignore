@@ -10,3 +10,6 @@ __pycache__/
 *.npy
 logs/*.npy
 logs/*.csv
+
+# Enregistrements longue durée (signaux bruts, parfois volumineux)
+recordings/
