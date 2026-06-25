@@ -37,22 +37,78 @@ F_IF        = 100_000         # 100 kHz — bien au-delà du notch DC du récept
 DECIMATION    = 10_000        # facteur de décimation
 DECIMATED_FS  = SAMPLE_RATE // DECIMATION   # = 100 Hz effectifs
 
-# --- Filtre passe-bande respiratoire ---
+# --- Filtre d'AFFICHAGE (suppression de dérive, faible latence) ---
+# Coupure basse volontairement plus basse que la bande respiratoire : une
+# respiration lente (~0.1-0.13 Hz) tombe sinon sur le bord du filtre, où le
+# retard de groupe explose (jusqu'à ~5 s à 6-7 resp/min). À 0.05 Hz + ordre 2,
+# le retard reste sous la seconde. La dérive du corps (< 0.05 Hz) est éliminée.
+FILTER_LOW   = 0.05   # Hz — passe-haut du filtre d'affichage
+FILTER_HIGH  = 0.8    # Hz — passe-bas (anti-jitter)
+FILTER_ORDER = 2      # ordre du filtre Butterworth
+
+# --- Bande de DÉTECTION du rythme (recherche du pic FFT) ---
+# C'est la FFT qui restreint à la vraie gamme respiratoire : la mesure du
+# rythme reste juste même si le filtre laisse passer un peu de dérive lente.
 F_LOW   = 0.1     # Hz — 6 resp/min  (seuil bas pathologique)
 F_HIGH  = 0.8     # Hz — 48 resp/min (seuil haut pathologique)
-FILTER_ORDER = 4  # ordre du filtre Butterworth
 
-# --- Fenêtre d'analyse FFT ---
-WINDOW_S    = 20.0   # durée de la fenêtre glissante en secondes
-OVERLAP     = 0.5    # chevauchement (50 % → mise à jour toutes les 10 s)
+# --- Fenêtre d'analyse FFT (CALCULS + ALERTES) ---
+# Fenêtre raccourcie pour réduire la latence ; la résolution plus grossière
+# (~4 resp/min) est récupérée par interpolation parabolique du pic FFT, qui
+# estime la fréquence ENTRE les points de la FFT. Lissage réduit à 2.
+WINDOW_S    = 14.0   # durée de la fenêtre glissante (s)
+OVERLAP     = 0.9    # chevauchement (90 % → nouvelle estimation toutes les ~1.4 s)
+
+# --- Rythme temps-réel pour AFFICHAGE (méthode temporelle, levier 4) ---
+# Mesure le rythme par l'intervalle entre pics d'inspiration successifs : se met
+# à jour à CHAQUE respiration (quasi temps-réel), moyenné sur les derniers pics
+# pour limiter les fluctuations. Réservé à l'affichage (bruité si irrégulier).
+PEAK_RATE_NPEAKS     = 3      # nombre de pics d'inspiration moyennés
+PEAK_HYSTERESIS_FRAC = 0.2    # seuil de confirmation d'un pic = frac × amplitude
+                              # (amplitude = crête-à-crête ≈ pleine oscillation)
+PEAK_MIN_DELTA       = 0.02   # seuil mini absolu (rad) — anti-bruit
+PEAK_REFRACTORY_S    = 1.2    # intervalle mini entre 2 pics (≈ 50 resp/min max)
+PEAK_STALE_S         = 12.0   # sans pic depuis ce délai → rythme affiché = —
 
 # --- Seuils d'alerte ---
-APNEA_DELAY_S  = 15   # secondes sans détection → alerte apnée
+# APNEA_DELAY_S = temps de CONFIRMATION sous le seuil d'amplitude avant l'alarme.
+# La fenêtre d'amplitude (AMP_WINDOW_S = 8 s) absorbe déjà ~8 s avant de passer
+# sous le seuil ; l'alarme tombe donc ~8 s + APNEA_DELAY_S après l'arrêt réel.
+APNEA_DELAY_S  = 0    # secondes sous le seuil → alerte apnée
 BRADY_RPM      = 8    # resp/min minimum normal
 TACHY_RPM      = 30   # resp/min maximum normal
 
+# --- Détection d'apnée par ABSENCE d'oscillation ---
+# L'apnée ne se voit pas au niveau absolu (le passe-haut fait retomber un
+# signal figé vers zéro), mais à la CHUTE D'AMPLITUDE. On mesure l'amplitude
+# CRÊTE-À-CRÊTE (p95−p5) de la PHASE BRUTE détrendée sur une fenêtre glissante ;
+# sous le seuil = plus de respiration. Crête-à-crête (et non écart-type) car
+# celui-ci ondule quand la fenêtre ne couvre pas un nombre entier de périodes.
+AMP_WINDOW_S     = 8.0    # fenêtre glissante de mesure d'amplitude (s) — mesurée
+                          # sur la phase BRUTE détrendée. Doit couvrir CONFORTABLEMENT
+                          # une période respiratoire, sinon l'amplitude crête-à-crête
+                          # ondule (instable < 1 période). 8 s → stable dès ~10/min ;
+                          # réaction à l'apnée ~8 s + APNEA_DELAY_S (≈ seuil clinique 10 s).
+APNEA_AMP_EPS    = 1e-4   # epsilon anti-division-par-zéro (PAS un seuil de détection :
+                          # le seuil est purement RELATIF, donc indépendant de
+                          # l'antenne/distance/gain — voir le seuil adaptatif ci-dessous).
+
+# --- Seuil d'apnée ADAPTATIF (auto-calibré sur le patient, PUREMENT RELATIF) ---
+# seuil = fraction × baseline, baseline = amplitude respiratoire « habituelle »
+# suivie par EMA LENTE qui s'adapte EN PERMANENCE (pas de gel). Conséquences :
+#  - indépendant de l'antenne : seuil relatif à la respiration courante ;
+#  - jamais bloqué : une calibration ratée se corrige toute seule (~τ), ou
+#    instantanément via la re-calibration manuelle (touche « c ») ;
+#  - l'apnée reste détectée car l'amplitude s'effondre bien sous le seuil
+#    pendant ~70 s avant que la baseline ait assez décru (>> seuil clinique).
+# Hystérésis (enter/exit) anti-flicker.
+WARMUP_S            = 10.0   # délai de calibration au démarrage (patient s'installe)
+APNEA_BASELINE_TAU_S = 35.0  # constante de temps de l'EMA de baseline (s)
+APNEA_FRAC_ENTER    = 0.25   # entrée en apnée si amplitude < 0.25 × baseline
+APNEA_FRAC_EXIT     = 0.40   # sortie d'apnée si amplitude > 0.40 × baseline
+
 # --- Lissage temporel ---
-SMOOTHING_N = 3   # nombre d'estimations à moyenner (respiratoire)
+SMOOTHING_N = 2   # nombre d'estimations FFT à moyenner
 
 # --- Filtre passe-bande cardiaque ---
 CARDIAC_F_LOW        = 0.8   # Hz — 48 bpm  (juste au-dessus de la bande resp)

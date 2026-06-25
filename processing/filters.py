@@ -14,11 +14,15 @@ class RespiratoryFilter:
 
     Préserve l'état entre les appels pour ne pas introduire de discontinuités
     à chaque nouveau buffer — indispensable en traitement continu.
+
+    Coupures volontairement larges (FILTER_LOW/HIGH) pour minimiser le retard de
+    groupe sur la respiration lente. La sélection fine de la bande respiratoire
+    est faite côté FFT (RateEstimator), pas ici.
     """
 
     def __init__(self):
         self._sos = _butter_bandpass(
-            config.F_LOW, config.F_HIGH, config.DECIMATED_FS, config.FILTER_ORDER
+            config.FILTER_LOW, config.FILTER_HIGH, config.DECIMATED_FS, config.FILTER_ORDER
         )
         self._zi = sosfilt_zi(self._sos)   # conditions initiales à zéro
 

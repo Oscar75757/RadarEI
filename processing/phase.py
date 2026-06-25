@@ -24,6 +24,29 @@ def remove_dc(signal: np.ndarray) -> np.ndarray:
     return signal - np.mean(signal)
 
 
+def oscillation_amplitude(signal: np.ndarray) -> float:
+    """Amplitude d'oscillation CRÊTE-À-CRÊTE (p95 − p5) après détrend LINÉAIRE.
+
+    Sert à détecter l'apnée RAPIDEMENT, sur la phase BRUTE plutôt que sur la
+    sortie du passe-haut : la phase brute se fige instantanément quand la
+    respiration s'arrête (pas de décroissance lente du filtre). Le détrend
+    linéaire retire la dérive du corps sur la fenêtre, sans queue temporelle.
+
+    On utilise l'écart crête-à-crête (percentiles 95−5, robuste aux pics) et
+    NON l'écart-type : l'écart-type d'une sinusoïde ondule fortement quand la
+    fenêtre ne contient pas un nombre entier de périodes, ce qui faisait
+    faussement passer l'amplitude sous le seuil pendant une respiration normale.
+    Le crête-à-crête, lui, est stable dès que la fenêtre couvre ~une période.
+    """
+    n = len(signal)
+    if n < 2:
+        return 0.0
+    x = np.arange(n)
+    slope, intercept = np.polyfit(x, signal, 1)
+    detrended = signal - (slope * x + intercept)
+    return float(np.percentile(detrended, 95) - np.percentile(detrended, 5))
+
+
 class Downconverter:
     """Descente numérique du ton IF de +F_IF vers 0 Hz (streaming continu).
 

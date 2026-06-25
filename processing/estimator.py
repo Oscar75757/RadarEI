@@ -51,12 +51,24 @@ class RateEstimator:
         window   = np.hanning(len(signal))
         spectrum = np.abs(np.fft.rfft(signal * window))
         freqs    = np.fft.rfftfreq(len(signal), d=1.0 / config.DECIMATED_FS)
+        df       = freqs[1] - freqs[0]
 
-        mask = (freqs >= self._f_low) & (freqs <= self._f_high)
-        if not mask.any():
+        band = np.where((freqs >= self._f_low) & (freqs <= self._f_high))[0]
+        if band.size == 0:
             return None
 
-        peak_freq = freqs[mask][np.argmax(spectrum[mask])]
+        k = band[np.argmax(spectrum[band])]
+
+        # Interpolation parabolique : précision sub-bin (Oscar)
+        if 0 < k < len(spectrum) - 1:
+            a, b, c = spectrum[k - 1], spectrum[k], spectrum[k + 1]
+            denom = a - 2 * b + c
+            delta = 0.5 * (a - c) / denom if denom != 0 else 0.0
+            delta = float(np.clip(delta, -0.5, 0.5))
+        else:
+            delta = 0.0
+
+        peak_freq = freqs[k] + delta * df
         rate      = peak_freq * 60.0
 
         self._rate_history.append(rate)
