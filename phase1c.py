@@ -32,7 +32,7 @@ import config
 from hardware.discovery   import resolve_master
 from hardware.tx          import init_master, start_tx, stop_tx
 from hardware.rx          import config_master_rx, capture
-from processing.phase     import decimate, Downconverter, PhaseTracker, oscillation_amplitude
+from processing.phase     import decimate, Downconverter, ClutterCanceller, PhaseTracker, oscillation_amplitude
 from processing.filters   import RespiratoryFilter
 from processing.estimator import RateEstimator
 from processing.peak_rate  import PeakRateEstimator
@@ -55,6 +55,7 @@ def main(record: bool = False, duration_h: float | None = None):
     start_tx(sdr)
 
     mixer     = Downconverter()
+    clutter   = ClutterCanceller()    # retire le couplage statique TX→RX (anti-inversion)
     tracker   = PhaseTracker()
     bandpass  = RespiratoryFilter()
     estimator = RateEstimator()       # FFT — calculs & alertes (robuste)
@@ -74,7 +75,7 @@ def main(record: bool = False, duration_h: float | None = None):
 
     # --- Tampons ---
     n_plot  = int(config.PLOT_WINDOW_S * fs)
-    wave    = collections.deque([0.0] * n_plot, maxlen=n_plot)          # onde filtrée (affichage)
+    wave    = collections.deque([0.0] * n_plot, maxlen=n_plot)          # phase BRUTE (affichage, vue 1a)
     raw_win = collections.deque(maxlen=int(config.AMP_WINDOW_S * fs))   # phase BRUTE (détection apnée)
     t_wave  = np.linspace(-config.PLOT_WINDOW_S, 0, n_plot)
 
@@ -87,7 +88,7 @@ def main(record: bool = False, duration_h: float | None = None):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6.5), height_ratios=[2, 1],
                                    sharex=True)
     (line_wave,) = ax1.plot(t_wave, list(wave), color="seagreen", lw=1.6)
-    ax1.set_ylabel("Onde respiratoire (rad)")
+    ax1.set_ylabel("Phase brute (rad, centrée)")
     ax1.grid(True, alpha=0.3)
     title = ax1.set_title("Acquisition en cours…")
     banner = ax1.text(0.01, 0.95, "", transform=ax1.transAxes, va="top", ha="left",
@@ -112,11 +113,13 @@ def main(record: bool = False, duration_h: float | None = None):
     # recalibrate : relance les 10 s de calibration du seuil adaptatif — utile
     #   après un changement d'antenne/position (re-cale instantanément la baseline).
     def reset_view(event=None):
-        wave.clear();     wave.extend([0.0] * n_plot)
+        last = wave[-1] if len(wave) else 0.0   # valeur courante (pas zéro) : évite le créneau
+        wave.clear();     wave.extend([last] * n_plot)
         amp_hist.clear(); amp_hist.extend([0.0] * n_amp_hist)
 
     def recalibrate(event=None):
         adaptive.recalibrate()
+        clutter.reset()            # ré-apprend le couplage statique (nouvelle position)
         print(">>> Re-calibration du seuil demandée (10 s).")
 
     def on_key(e):
@@ -154,14 +157,15 @@ def main(record: bool = False, duration_h: float | None = None):
             iq     = capture(sdr)
             iq_bb  = mixer.process(iq)
             iq_dec = decimate(iq_bb)
+            iq_dec = clutter.process(iq_dec)   # retire le couplage statique survivant à 0 Hz
             phase  = tracker.process(iq_dec)
             filt   = bandpass.apply(phase)
 
             if recorder is not None:
                 recorder.write(phase)      # signal source enregistré sur disque
 
-            for v in filt:
-                wave.append(float(v))      # onde filtrée → affichage
+            for v in phase:
+                wave.append(float(v))      # phase BRUTE → affichage (vue type phase 1a)
             for v in phase:
                 raw_win.append(float(v))   # phase brute → détection d'apnée
 
@@ -220,7 +224,8 @@ def main(record: bool = False, duration_h: float | None = None):
                     rec_str = (f"● REC {el}/{_fmt_hms(duration_h * 3600)}  |  "
                                if duration_h else f"● REC {el}  |  ")
 
-                line_wave.set_ydata(np.array(wave))
+                arr_w = np.array(wave)
+                line_wave.set_ydata(arr_w - arr_w.mean())   # centrage affichage (vue phase 1a)
                 ax1.relim(); ax1.autoscale_view(scalex=False)
 
                 if warming:

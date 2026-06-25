@@ -74,6 +74,47 @@ class Downconverter:
         self._n = 0
 
 
+class ClutterCanceller:
+    """Annule le vecteur statique S (couplage TX→RX + réflexions fixes) qui SURVIT
+    à la descente IF.
+
+    Le couplage direct entre antennes est émis au ton fc+F_IF, exactement comme
+    l'écho utile : il se retrouve à 0 Hz après la descente IF et n'est donc PAS
+    éliminé par la décimation (qui n'enlève que ce qui est à -F_IF). Ce S s'ajoute
+    à l'écho mobile du thorax M·e^{jφ}. Quand |S| domine, la phase mesurée vaut
+    ≈ ∠S + (|M|/|S|)·sin(φ − ∠S) : la respiration n'apparaît qu'en PROJECTION, de
+    signe ET d'amplitude réglés par cos(φ_moy − ∠S) — donc par la distance du
+    patient modulo λ. D'où l'inversion aléatoire inspiration/expiration d'une
+    session à l'autre, et les « points morts » (cos ≈ 0 → signal très faible).
+
+    On estime S par une moyenne complexe glissante (EMA) à constante de temps
+    LONGUE devant la respiration, puis on la soustrait. La phase redevient le vrai
+    déplacement géométrique : signe déterministe (fixé par la seule géométrie
+    d'antenne) et amplitude pleine. τ doit rester ≫ période respiratoire, sinon
+    l'EMA « mange » la respiration elle-même.
+    """
+
+    def __init__(self, tau_s: float = config.CLUTTER_TAU_S,
+                 fs: float = config.DECIMATED_FS):
+        self.alpha = 1.0 - np.exp(-1.0 / (tau_s * fs)) if tau_s > 0 else None
+        self._dc   = None
+
+    def process(self, iq: np.ndarray) -> np.ndarray:
+        if self.alpha is None:        # désactivé : passe-plat
+            return iq
+        out = np.empty_like(iq)
+        dc, a = self._dc, self.alpha
+        for i in range(len(iq)):
+            s = iq[i]
+            dc = s if dc is None else dc + a * (s - dc)
+            out[i] = s - dc
+        self._dc = dc
+        return out
+
+    def reset(self):
+        self._dc = None
+
+
 class PhaseTracker:
     """Extraction de phase CONTINUE entre buffers successifs (streaming).
 

@@ -34,6 +34,18 @@ RX_BUFFER   = 100_000        # Taille du buffer IQ par capture — MULTIPLE de D
 # éliminés par la décimation (moyenne = passe-bas à ~100 Hz).
 F_IF        = 100_000         # 100 kHz — bien au-delà du notch DC du récepteur
 
+# --- Annulation du clutter / couplage statique (vecteur S à 0 Hz) ---
+# Le couplage direct TX→RX (et les réflexions fixes) arrive au même ton fc+F_IF
+# que l'écho utile : il se retrouve à 0 Hz après descente IF et SURVIT à la
+# décimation. Ce vecteur statique S s'ajoute à l'écho mobile M·e^{jφ} et fait que
+# la phase mesurée n'est qu'une PROJECTION du mouvement, de signe/amplitude
+# dépendant de la distance du patient modulo λ (→ inspiration parfois inversée,
+# « points morts »). On l'estime par une moyenne complexe glissante (EMA) et on
+# la soustrait AVANT l'arctan : signe déterministe + amplitude pleine restaurés.
+# τ doit rester ≫ période respiratoire (sinon l'EMA mange la respiration) :
+# 20 s ne coupe que < ~0.01 Hz, la respiration (0.1–0.8 Hz) passe intacte.
+CLUTTER_TAU_S = 20.0          # constante de temps de l'EMA complexe (s) ; 0 = désactivé
+
 # --- Décimation ---
 # Le signal respiratoire est < 1 Hz.
 # On décime 1 MSPS → DECIMATED_FS pour alléger le traitement.
