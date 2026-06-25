@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>RadarEI — Monitoring respiratoire</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    :root {
+      --bg:     #f3f4f6;
+      --card:   #ffffff;
+      --border: #e5e7eb;
+      --muted:  #6b7280;
+      --text:   #111827;
+      --green:  #16a34a;
+      --red:    #dc2626;
+      --blue:   #2563eb;
+      --orange: #d97706;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px; max-width: 640px; margin: 0 auto;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    h1 { font-size: 18px; font-weight: 700; margin: 0; }
+    .subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .conn-row { display: flex; align-items: center; gap: 8px; font-size: 13px;
+                color: var(--muted); margin-bottom: 12px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+    .dot.on { background: var(--green); }
+
+    .banner {
+      border-radius: 12px; padding: 12px 18px; margin-bottom: 14px;
+      font-weight: 700; text-align: center; font-size: 15px;
+      border: 1.5px solid #d1fae5; background: #f0fdf4; color: #166534;
+    }
+    .banner.alert   { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+    .banner.warming { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+    .banner.waiting { background: #f9fafb; border-color: var(--border); color: var(--muted); }
+
+    .card {
+      background: var(--card); border-radius: 14px; padding: 18px;
+      margin-bottom: 12px; border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    }
+    .label { color: var(--muted); font-size: 11px; font-weight: 700;
+             letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+
+    .big  { font-size: 68px; font-weight: 800; text-align: center;
+            color: var(--green); line-height: 1; }
+    .big.alert { color: var(--red); }
+    .big.na    { color: #9ca3af; }
+    .unit { color: var(--muted); font-size: 15px; text-align: center; margin-top: 6px; }
+
+    .med { font-size: 26px; font-weight: 700; text-align: center; color: var(--text); }
+
+    canvas { width: 100%; height: 150px; display: block; border-radius: 6px; }
+
+    .ts   { color: #9ca3af; font-size: 11px; text-align: center; margin-top: 10px; }
+    .hint { color: var(--muted); font-size: 12px; text-align: center;
+            margin-top: 18px; line-height: 1.6; }
+    code  { background: #f3f4f6; border: 1px solid var(--border);
+            padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+
+    .actions { display: flex; gap: 10px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
+    button {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0,0,0,.05);
+    }
+    button:hover { background: #f9fafb; }
+    button.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+    button.primary:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>RadarEI</h1>
+      <div class="subtitle">Monitoring respiratoire — radar Doppler CW</div>
+    </div>
+  </header>
+
+  <div class="conn-row">
+    <span class="dot" id="dot"></span>
+    <span id="conn-text">Connexion au broker…</span>
+  </div>
+
+  <div class="banner waiting" id="banner">En attente du radar…</div>
+
+  <div class="card">
+    <div class="label">Rythme respiratoire</div>
+    <div class="big na" id="rate">—</div>
+    <div class="unit" id="rate-unit">resp / min</div>
+  </div>
+
+  <div class="card" id="amp-card" style="display:none">
+    <div class="label">Amplitude d'oscillation</div>
+    <div class="med" id="amp">—</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Onde respiratoire (30 s)</div>
+    <canvas id="wave"></canvas>
+  </div>
+
+  <div class="ts" id="ts"></div>
+
+  <div class="actions">
+    <button id="sound-btn">🔔 Activer le son d'alerte</button>
+    <button class="primary" id="share-btn">🔗 Copier le lien</button>
+  </div>
+
+  <p class="hint">
+    Lancez <code>python phase1a.py</code> ou <code>python phase1c.py</code> sur n'importe quel PC
+    configuré avec le même topic MQTT.<br>La page fonctionne depuis n'importe quel réseau.
+  </p>
+
+<script>
+  // ── Config ──────────────────────────────────────────────────────────────
+  const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+  const TOPIC  = "radar/louis/live";   // doit correspondre à MQTT_PREFIX/live dans config.py
+
+  // ── DOM ─────────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+  const dot      = $("dot"),  connText = $("conn-text"), banner = $("banner");
+  const rateEl   = $("rate"), rateUnit = $("rate-unit");
+  const ampCard  = $("amp-card"), ampEl = $("amp");
+  const tsEl     = $("ts"),   canvas   = $("wave");
+  const ctx      = canvas.getContext("2d");
+
+  // ── Son ─────────────────────────────────────────────────────────────────
+  let audioCtx = null, beepTimer = null, soundEnabled = false;
+  $("sound-btn").addEventListener("click", () => {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume();
+    soundEnabled = true;
+    $("sound-btn").textContent = "🔔 Son activé";
+    $("sound-btn").disabled = true;
+  });
+
+  function beep() {
+    if (!soundEnabled || !audioCtx) return;
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.frequency.value = 880; osc.type = "square"; g.gain.value = 0.18;
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(); osc.stop(audioCtx.currentTime + 0.22);
+  }
+  function startAlarm() {
+    if (beepTimer) return;
+    beep(); beepTimer = setInterval(beep, 1000);
+    if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]);
+  }
+  function stopAlarm() {
+    clearInterval(beepTimer); beepTimer = null;
+    if (navigator.vibrate) navigator.vibrate(0);
+  }
+
+  // ── Partage ─────────────────────────────────────────────────────────────
+  $("share-btn").addEventListener("click", () => {
+    navigator.clipboard.writeText(location.href).then(() => {
+      $("share-btn").textContent = "✅ Lien copié !";
+      setTimeout(() => { $("share-btn").textContent = "🔗 Copier le lien"; }, 2000);
+    });
+  });
+
+  // ── Courbe ──────────────────────────────────────────────────────────────
+  function drawWave(wave, color) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#f9fafb";
+    ctx.fillRect(0, 0, w, h);
+    if (!wave || wave.length < 2) return;
+    const mn = Math.min(...wave), mx = Math.max(...wave);
+    const range = (mx - mn) || 1, pad = 10;
+    ctx.beginPath(); ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.lineJoin = "round";
+    wave.forEach((v, i) => {
+      const x = pad + i * (w - 2*pad) / (wave.length - 1);
+      const y = h - pad - (v - mn) * (h - 2*pad) / range;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // ── Mise à jour de l'UI ─────────────────────────────────────────────────
+  let wasAlert = false;
+
+  function update(d) {
+    tsEl.textContent = d.ts ? "Dernière mesure : " + d.ts : "";
+
+    // Phase 1a : onde brute, pas d'alertes
+    if (d.mode === "phase1a") {
+      banner.className = "banner";
+      banner.style.background = "#eff6ff"; banner.style.borderColor = "#bfdbfe"; banner.style.color = "#1e40af";
+      banner.textContent = "📡 Phase 1a — signal brut (validation de la chaîne RF)";
+      rateEl.textContent = "—"; rateEl.className = "big na";
+      rateUnit.textContent = "Phase 1a — rythme non calculé";
+      ampCard.style.display = "none";
+      drawWave(d.wave, "#3b82f6");
+      stopAlarm(); wasAlert = false;
+      return;
+    }
+
+    // Remise à zéro du style inline si on revient de phase1a
+    banner.style.background = ""; banner.style.borderColor = ""; banner.style.color = "";
+
+    // Phase 1c — calibration
+    if (d.warming) {
+      banner.className = "banner warming";
+      banner.textContent = "⏳ Calibration — respirez normalement pendant 10 s…";
+      rateEl.textContent = "—"; rateEl.className = "big na";
+      rateUnit.textContent = "resp / min";
+      ampCard.style.display = "none";
+      drawWave(d.wave, "#d1d5db");
+      stopAlarm(); wasAlert = false;
+      return;
+    }
+
+    // Phase 1c — surveillance active
+    ampCard.style.display = "";
+    const alertOn = d.alerts && d.alerts.length > 0;
+
+    if (alertOn) {
+      banner.className = "banner alert";
+      banner.textContent = "⚠️  " + d.alerts.map(a => a.split(" — ")[0]).join("   •   ");
+    } else {
+      banner.className = "banner";
+      banner.textContent = "✅ Normal";
+    }
+
+    rateEl.textContent = d.rate_rpm != null ? d.rate_rpm.toFixed(1) : "—";
+    rateEl.className   = "big" + (alertOn ? " alert" : "");
+    rateUnit.textContent = "resp / min";
+    ampEl.textContent  = d.amplitude != null ? d.amplitude.toFixed(4) + " rad" : "—";
+
+    if (alertOn && !wasAlert) startAlarm();
+    if (!alertOn && wasAlert) stopAlarm();
+    wasAlert = alertOn;
+
+    drawWave(d.wave, alertOn ? "#dc2626" : "#16a34a");
+  }
+
+  // ── MQTT ────────────────────────────────────────────────────────────────
+  const client = mqtt.connect(BROKER, {
+    clientId: "radar-web-" + Math.random().toString(16).slice(2, 8),
+    reconnectPeriod: 3000,
+  });
+
+  client.on("connect", () => {
+    dot.classList.add("on");
+    connText.textContent = "Connecté — en attente du radar";
+    client.subscribe(TOPIC);
+  });
+  client.on("reconnect", () => {
+    dot.classList.remove("on");
+    connText.textContent = "Reconnexion…";
+  });
+  client.on("close", () => {
+    dot.classList.remove("on");
+    connText.textContent = "Déconnecté";
+  });
+  client.on("message", (_t, payload) => {
+    try { update(JSON.parse(payload.toString())); } catch(e) {}
+  });
+</script>
+</body>
+</html>

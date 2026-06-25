@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 
 import config
+from mqtt_publisher       import MQTTPublisher
 from hardware.discovery   import resolve_master
 from hardware.tx          import init_master, start_tx, stop_tx
 from hardware.rx          import config_master_rx, capture
@@ -62,6 +63,7 @@ def main(record: bool = False, duration_h: float | None = None):
     alerter   = AlertSystem()
     adaptive  = AdaptiveApneaThreshold()   # seuil d'apnée auto-calibré
     logger    = SessionLogger()
+    mqtt      = MQTTPublisher()
     print(f"[log] Journalisation → {logger.path}")
 
     fs = config.DECIMATED_FS
@@ -258,6 +260,11 @@ def main(record: bool = False, duration_h: float | None = None):
                         banner.set_text("✅ Normal")
                         banner.set_color("green")
 
+                mqtt.publish_live(
+                    disp_rate if not warming else None,
+                    amplitude, alerts, list(wave),
+                    mode="phase1c", warming=warming,
+                )
                 fig.canvas.draw_idle()
                 fig.canvas.flush_events()
                 plt.pause(0.001)
@@ -266,6 +273,7 @@ def main(record: bool = False, duration_h: float | None = None):
         print("\nArrêt demandé.")
     finally:
         stop_tx(sdr)
+        mqtt.close()
         logger.close()
         if recorder is not None:
             if apnea_start is not None:                 # apnée en cours à l'arrêt

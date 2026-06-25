@@ -8,8 +8,8 @@
 # Le code retrouve tout seul l'URI courant de chaque rôle (hardware/discovery.py).
 # Pluto 1 = MAÎTRE : émet la CW ET reçoit (canal cohérent, LO partagé).
 # Pluto 2 = récepteur SEUL : 2e point de vue, synchronisé en logiciel (phase 1d).
-SERIAL_MASTER = "104473dcbc0d000b0400340077bd47a811"   # maître TX+RX (AD9364, débridé)
-SERIAL_RX2    = "104473dcbc0d000b130035004db947f3a5"   # récepteur seul
+SERIAL_MASTER = "104473b80a160002ebff25003058be8bb8"   # maître TX+RX (AD9364, débridé)
+SERIAL_RX2    = "104473b80a160002ebff25003058be8bb8"   # récepteur seul
 
 # Active le 2e récepteur (diversité spatiale). False = on travaille sur le seul
 # Pluto maître (recommandé pour la mise au point de la phase 1).
@@ -115,3 +115,9 @@ SMOOTHING_N = 2   # nombre d'estimations FFT à moyenner
 
 # --- Affichage ---
 PLOT_WINDOW_S = 30   # durée visible sur le graphe temps-réel (secondes)
+
+# --- MQTT (monitoring web) ---
+MQTT_BROKER      = "broker.hivemq.com"   # broker public gratuit, sans compte
+MQTT_PORT        = 1883
+MQTT_PREFIX      = "radar/louis"         # préfixe topic — à personnaliser
+MQTT_WAVE_POINTS = 150                   # points de courbe envoyés par message

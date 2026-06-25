@@ -12,3 +12,6 @@ matplotlib==3.11.0
 # Pilotage des ADALM-PlutoSDR (nécessite aussi libiio installé au niveau système)
 pyadi-iio==0.0.21
 pylibiio==0.25
+
+# Publication MQTT (monitoring web)
+paho-mqtt==2.1.0

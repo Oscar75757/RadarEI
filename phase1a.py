@@ -23,6 +23,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import config
+from mqtt_publisher     import MQTTPublisher
 from hardware.discovery import resolve_master
 from hardware.tx        import init_master, start_tx, stop_tx
 from hardware.rx        import config_master_rx, capture
@@ -39,6 +40,7 @@ def main():
 
     mixer   = Downconverter()   # descend le ton IF (+100 kHz) vers 0 Hz
     tracker = PhaseTracker()
+    mqtt    = MQTTPublisher()
 
     # --- Fenêtre d'affichage glissante ---
     n_points = int(config.PLOT_WINDOW_S * config.DECIMATED_FS)
@@ -69,18 +71,21 @@ def main():
             for v in phase:
                 buf.append(float(v))
 
-            arr = np.array(buf)
-            line.set_ydata(arr - arr.mean())  # centrage pour l'affichage
+            arr      = np.array(buf)
+            centered = arr - arr.mean()
+            line.set_ydata(centered)
             ax.relim()
             ax.autoscale_view(scalex=False)
             fig.canvas.draw_idle()
             fig.canvas.flush_events()
             plt.pause(0.001)
+            mqtt.publish_live(None, 0.0, [], centered.tolist(), mode="phase1a")
 
     except KeyboardInterrupt:
         print("\nArrêt demandé.")
     finally:
         stop_tx(sdr)
+        mqtt.close()
         print("Émission arrêtée. Phase 1a terminée.")
 
 
